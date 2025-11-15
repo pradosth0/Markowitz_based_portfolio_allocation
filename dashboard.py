@@ -150,7 +150,7 @@ class PortfolioDashboardVisualizer:
             return
 
         # Resample weekly for smoother display
-        pf_monthly = pf_value.resample('W').last().fillna(method='ffill')
+        pf_monthly = pf_value.resample('M').last().fillna(method='ffill')
         pf_pnl = pf_monthly - capital
         pf_diff = pf_pnl.diff().fillna(0)
 
@@ -182,7 +182,7 @@ class PortfolioDashboardVisualizer:
         )
         """
         
-        ax.set_title("Portfolio Cumulative PnL ", fontsize=15, fontweight='bold')
+        ax.set_title("Portfolio Cumulative Monthly PnL ", fontsize=15, fontweight='bold')
         ax.set_ylabel("PnL (€)")
         ax.grid(alpha=0.3)
         ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:,.0f}'))
@@ -403,9 +403,9 @@ class PortfolioDashboardVisualizer:
         self.plot_drawdown(ax_dd)
 
         # Row 6 — Risk Contribution & PnL Attribution
-        ax_rc = fig.add_subplot(gs[5, 0])
+        #ax_rc = fig.add_subplot(gs[5, 0])
         #ax_pa = fig.add_subplot(gs[5, 1])
-        self.plot_risk_contribution(ax_rc)
+        #self.plot_risk_contribution(ax_rc)
         #self.plot_pnl_attribution(ax_pa, freq='M')
 
         # Row 8 — Big cumulative PnL PF only
