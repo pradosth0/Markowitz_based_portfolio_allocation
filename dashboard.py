@@ -274,6 +274,27 @@ class PortfolioDashboardVisualizer:
         ax.grid(alpha=0.3)
         ax.legend()
 
+    
+    def plot_exposures_by_country(self, ax=None):
+        country_expo = np.abs(self.ts.exposition_by_country())
+        country_expo.plot(kind='area', stacked=True, ax=ax, alpha=0.7, legend=True)
+
+
+        ax.set_ylabel("Exposition in Euros")
+        ax.set_title("Exposition by Country")
+        ax.legend(title="Country", loc="upper left")
+        ax.grid(alpha=0.3)
+
+    def plot_exposures_by_mat(self, ax=None):
+        mat_expo = np.abs(self.ts.exposition_by_mat())
+        
+        mat_expo.plot(kind='area', stacked=True, ax=ax, alpha=0.7, legend=True)
+
+        ax.set_ylabel("Exposition in Euros")
+        ax.set_title("Exposition by mat")
+        ax.legend(title="Maturity", loc="upper left")
+        ax.grid(alpha=0.3)
+
     # -------------------------------------------------------------------------
     # WEIGHTS
     # -------------------------------------------------------------------------
@@ -282,10 +303,31 @@ class PortfolioDashboardVisualizer:
             return
 
         df = np.abs(self.ts.weights_history) if abs_weights else self.ts.weights_history
+        
         if ax is None:
             ax = plt.gca()
 
+        # Trace toutes les séries (toutes les couleurs seront visibles)
         df.plot(kind='area', stacked=True, ax=ax, alpha=0.7, legend=False)
+
+        # --- Calcul du top 5 ---
+        top5 = df.mean().nlargest(5).index.tolist()
+
+        # --- Récupération handles + labels générés automatiquement ---
+        handles, labels = ax.get_legend_handles_labels()
+
+        # Le plot n'a pas encore de légende → on génère les handles de façon cohérente
+        full_handles = ax.get_children()[::-1]  # matplotlib stocke dans l'ordre inverse
+        patch_handles = [h for h in full_handles if hasattr(h, "get_facecolor")][:len(df.columns)]
+
+        # Mapping produit -> handle
+        handle_map = dict(zip(df.columns, patch_handles))
+
+        # --- Construire une légende ne contenant que le top-5 ---
+        top5_handles = [handle_map[p] for p in top5]
+
+        ax.legend(top5_handles, top5, title="Top 5 produits", loc="upper left")
+
         ax.set_ylabel("Weights" + (" (abs)" if abs_weights else ""))
         ax.set_title("Portfolio Weights")
         ax.grid(alpha=0.3)
@@ -390,25 +432,28 @@ class PortfolioDashboardVisualizer:
         self.plot_weights(ax3)
         self.plot_exposures(ax4)
 
-        # Row 3
-        ax5 = fig.add_subplot(gs[2, 1])
-        self.print_metrics_table(ax5)
+        #Row 3 — 
+        ax_1 = fig.add_subplot(gs[2, 0])
+        ax_2 = fig.add_subplot(gs[2, 1])
+        self.plot_exposures_by_country(ax_1)
+        self.plot_exposures_by_mat(ax_2)
 
         # Row 4
-        ax6 = fig.add_subplot(gs[3, :])
+        ax5 = fig.add_subplot(gs[3, 1])
+
+        self.print_metrics_table(ax5)
+
+        # Row 5
+        ax6 = fig.add_subplot(gs[4, :])
         self.plot_monthly_value(ax6)
 
-        # Row 5 — Drawdown
-        ax_dd = fig.add_subplot(gs[4, :])
+        # Row 6 — Drawdown
+        ax_dd = fig.add_subplot(gs[5, :])
         self.plot_drawdown(ax_dd)
 
-        # Row 6 — Risk Contribution & PnL Attribution
-        #ax_rc = fig.add_subplot(gs[5, 0])
-        #ax_pa = fig.add_subplot(gs[5, 1])
-        #self.plot_risk_contribution(ax_rc)
-        #self.plot_pnl_attribution(ax_pa, freq='M')
 
-        # Row 8 — Big cumulative PnL PF only
+
+        # Row 7-8 — Big cumulative PnL PF only
         ax7 = fig.add_subplot(gs[6:, :])
         self.plot_big_cumulative_pnl_pf_only(ax7)
 
