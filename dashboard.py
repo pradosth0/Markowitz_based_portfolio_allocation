@@ -123,11 +123,12 @@ class PortfolioDashboardVisualizer:
                 bottom=start,
                 width=20,
                 color=color
+                
             )
 
         # --- Optional benchmark line ---
         if show_benchmark and bm_monthly is not None:
-            ax.plot(bm_monthly.index, bm_monthly, lw=2, linestyle='--', label='Benchmark cum PnL')
+            ax.plot(bm_monthly.index, bm_monthly, lw=2, linestyle='--', label='Benchmark cum PnL', color = 'orange')
 
         ax.set_ylabel("Cumulative PnL (€)")
         ax.set_title(f"Cumulative PnL – Exposure: {self.ts.metrics.get('initial_capital')}€")
