@@ -6,9 +6,8 @@ from matplotlib.gridspec import GridSpec
 import seaborn as sns
 
 
-
 class PortfolioDashboardVisualizer:
-    def __init__(self, ts_portfolio, dark = False):
+    def __init__(self, ts_portfolio, dark=False):
         """
         ts_portfolio : instance de TimeSeriesPortfolio
         dark : active un thème sombre propre
@@ -123,42 +122,37 @@ class PortfolioDashboardVisualizer:
                 bottom=start,
                 width=20,
                 color=color
-                
             )
 
         # --- Optional benchmark line ---
         if show_benchmark and bm_monthly is not None:
-            ax.plot(bm_monthly.index, bm_monthly, lw=2, linestyle='--', label='Benchmark cum PnL', color = 'orange')
+            ax.plot(bm_monthly.index, bm_monthly, lw=2, linestyle='--',
+                    label='Benchmark cum PnL', color='orange')
 
         ax.set_ylabel("Cumulative PnL (€)")
         ax.set_title(f"Cumulative PnL – Exposure: {self.ts.metrics.get('initial_capital')}€")
         ax.grid(alpha=0.3)
         ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:,.0f}'))
         ax.legend()
-    
+
     def plot_big_cumulative_pnl_pf_only(self, ax=None):
         """
         Version lisible et 'grosse' du cumulative PnL du portefeuille.
         - PF uniquement
         - Barres vert/rouge collées
-        - Ligne cumulative
         """
-
         pf_value = self._get_or_compute_portfolio_value()
         capital = self.ts.metrics.get("initial_capital", self.ts.capital_init)
 
         if pf_value is None:
             return
 
-        # Resample weekly for smoother display
         pf_monthly = pf_value.resample('M').last().fillna(method='ffill')
         pf_pnl = pf_monthly - capital
-        pf_diff = pf_pnl.diff().fillna(0)
 
         if ax is None:
             fig, ax = plt.subplots(figsize=(14, 6))
 
-        # --- Barres rouge/vert ---
         for i in range(1, len(pf_pnl)):
             start = pf_pnl.iloc[i - 1]
             end = pf_pnl.iloc[i]
@@ -172,23 +166,12 @@ class PortfolioDashboardVisualizer:
                 alpha=0.8
             )
 
-        # --- Ligne cumulative ---
-        """
-        ax.plot(
-            pf_pnl.index,
-            pf_pnl.values,
-            linewidth=2.5,
-            color='white' if plt.rcParams['axes.facecolor'] != 'white' else 'blue',
-            label="Portfolio cumulative PnL"
-        )
-        """
-        
-        ax.set_title("Portfolio Cumulative Monthly PnL ", fontsize=15, fontweight='bold')
+        ax.set_title("Portfolio Cumulative Monthly PnL", fontsize=15, fontweight='bold')
         ax.set_ylabel("PnL (€)")
         ax.grid(alpha=0.3)
         ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:,.0f}'))
         ax.legend()
-    
+
     def plot_pnl_attribution(self, ax=None, freq='M'):
         """
         Attribution du PnL par actif/pays.
@@ -204,7 +187,9 @@ class PortfolioDashboardVisualizer:
 
         # Align
         R = R.loc[pf_pnl.index].fillna(0)
-        exposures = exposures.reindex(self.ts.rebalance_dates[:-1]).ffill().reindex(pf_pnl.index, method='ffill')
+        exposures = exposures.reindex(self.ts.rebalance_dates[:-1]).ffill().reindex(
+            pf_pnl.index, method='ffill'
+        )
 
         # PnL par actif
         pnl_assets = R * exposures
@@ -213,7 +198,7 @@ class PortfolioDashboardVisualizer:
         if ax is None:
             ax = plt.gca()
 
-        pnl_assets_resampled.plot(kind='bar', stacked=True, ax=ax, figsize=(10,5))
+        pnl_assets_resampled.plot(kind='bar', stacked=True, ax=ax, figsize=(10, 5))
         ax.set_title(f"PnL Attribution ({freq})")
         ax.set_ylabel("PnL (€)")
         ax.grid(alpha=0.3)
@@ -228,7 +213,6 @@ class PortfolioDashboardVisualizer:
         if pf_value is None:
             return
 
-        # Resample end-of-month
         pf_m = pf_value.resample('M').last()
         bm_m = bm_value.resample('M').last() if bm_value is not None else None
 
@@ -245,7 +229,6 @@ class PortfolioDashboardVisualizer:
         ax.grid(alpha=0.3)
         ax.legend(["Monthly PnL"])
 
-        # Cumulative line
         ax2 = ax.twinx()
         ax2.plot(pf_m.index, pf_m.values, lw=2, label='Portfolio Value')
         if bm_m is not None:
@@ -275,62 +258,64 @@ class PortfolioDashboardVisualizer:
         ax.grid(alpha=0.3)
         ax.legend()
 
-    
     def plot_exposures_by_country(self, ax=None):
-        country_expo = np.abs(self.ts.exposition_by_country())
-        country_expo.plot(kind='area', stacked=True, ax=ax, alpha=0.7, legend=True)
+        expo = self.ts.exposition_by_country()
+        if expo.empty:
+            return
 
+        if ax is None:
+            ax = plt.gca()
 
+        # expos signées pour voir les shorts
+        expo.plot(kind='area', stacked=True, ax=ax, alpha=0.7, legend=True)
         ax.set_ylabel("Exposition in Euros")
-        ax.set_title("Exposition by Country")
+        ax.set_title("Exposition by Country (signed)")
         ax.legend(title="Country", loc="upper left")
         ax.grid(alpha=0.3)
 
     def plot_exposures_by_mat(self, ax=None):
-        mat_expo = np.abs(self.ts.exposition_by_mat())
-        
-        mat_expo.plot(kind='area', stacked=True, ax=ax, alpha=0.7, legend=True)
+        expo = self.ts.exposition_by_mat()
+        if expo.empty:
+            return
 
+        if ax is None:
+            ax = plt.gca()
+
+        expo.plot(kind='area', stacked=True, ax=ax, alpha=0.7, legend=True)
         ax.set_ylabel("Exposition in Euros")
-        ax.set_title("Exposition by mat")
+        ax.set_title("Exposition by Maturity (signed)")
         ax.legend(title="Maturity", loc="upper left")
         ax.grid(alpha=0.3)
 
     # -------------------------------------------------------------------------
     # WEIGHTS
     # -------------------------------------------------------------------------
-    def plot_weights(self, ax=None, abs_weights=True):
+    def plot_weights(self, ax=None, abs_weights=False):
+        """
+        abs_weights=False par défaut pour voir les shorts.
+        """
         if self.ts.weights_history.empty:
             return
 
         df = np.abs(self.ts.weights_history) if abs_weights else self.ts.weights_history
-        
+
         if ax is None:
             ax = plt.gca()
 
-        # Trace toutes les séries (toutes les couleurs seront visibles)
         df.plot(kind='area', stacked=True, ax=ax, alpha=0.7, legend=False)
 
-        # --- Calcul du top 5 ---
-        top5 = df.mean().nlargest(5).index.tolist()
+        # Top-5 en moyenne absolue (même si on affiche signé)
+        top5 = df.abs().mean().nlargest(5).index.tolist()
 
-        # --- Récupération handles + labels générés automatiquement ---
-        handles, labels = ax.get_legend_handles_labels()
-
-        # Le plot n'a pas encore de légende → on génère les handles de façon cohérente
-        full_handles = ax.get_children()[::-1]  # matplotlib stocke dans l'ordre inverse
+        full_handles = ax.get_children()[::-1]
         patch_handles = [h for h in full_handles if hasattr(h, "get_facecolor")][:len(df.columns)]
-
-        # Mapping produit -> handle
         handle_map = dict(zip(df.columns, patch_handles))
 
-        # --- Construire une légende ne contenant que le top-5 ---
-        top5_handles = [handle_map[p] for p in top5]
+        top5_handles = [handle_map[p] for p in top5 if p in handle_map]
 
         ax.legend(top5_handles, top5, title="Top 5 produits", loc="upper left")
-
         ax.set_ylabel("Weights" + (" (abs)" if abs_weights else ""))
-        ax.set_title("Portfolio Weights")
+        ax.set_title("Portfolio Weights (signed)")
         ax.grid(alpha=0.3)
 
     # -------------------------------------------------------------------------
@@ -359,10 +344,10 @@ class PortfolioDashboardVisualizer:
         table.auto_set_font_size(False)
         table.set_fontsize(12)
         table.scale(1, 1.4)
-    
-    # -----------------------------------------------------
-    # Max draw down 
-    # -----------------------------------------------------
+
+    # -------------------------------------------------------------------------
+    # Max drawdown
+    # -------------------------------------------------------------------------
     def plot_drawdown(self, ax=None):
         dd = self.ts.metrics.get("drawdown")
         if dd is None or dd.empty:
@@ -377,11 +362,10 @@ class PortfolioDashboardVisualizer:
         ax.set_title("Portfolio Drawdown")
         ax.set_ylabel("Drawdown (%)")
         ax.grid(alpha=0.3)
-    
 
     # -------------------------------------------------------------------------
-    #Rsik contribution 
-    # ------------------------------------------------------------------------
+    # Risk contribution 
+    # -------------------------------------------------------------------------
     def plot_risk_contribution(self, ax=None):
         """
         Contribution au risque ex-post par actif : RC_i = w_i * (Σ_cov_row_i) / vol_pf
@@ -393,10 +377,8 @@ class PortfolioDashboardVisualizer:
             print("Risk contribution impossible : poids ou retours manquants.")
             return
 
-        # Covariance matrix ex-post
         cov = R.cov()
-        avg_w = w.mean()  # moyenne des poids dans le temps
-        
+        avg_w = w.mean()
         pf_vol = np.sqrt(avg_w @ cov @ avg_w)
 
         if pf_vol == 0:
@@ -411,14 +393,14 @@ class PortfolioDashboardVisualizer:
 
         rc.plot(kind='bar', ax=ax)
         ax.set_title("Risk Contribution (Ex-post)")
-        ax.set_ylabel("Contribution au risque (%)")
+        ax.set_ylabel("Contribution au risque")
         ax.grid(alpha=0.3)
 
     # -------------------------------------------------------------------------
     # FULL DASHBOARD
     # -------------------------------------------------------------------------
     def plot_dashboard(self):
-        fig = plt.figure(figsize=(15, 28))  # un peu plus haut pour tout tenir
+        fig = plt.figure(figsize=(15, 28))
         gs = GridSpec(8, 2, figure=fig, width_ratios=[2, 2])
 
         # Row 1
@@ -430,10 +412,11 @@ class PortfolioDashboardVisualizer:
         # Row 2
         ax3 = fig.add_subplot(gs[1, 0])
         ax4 = fig.add_subplot(gs[1, 1])
-        self.plot_weights(ax3)
+        # weights signés pour voir les shorts
+        self.plot_weights(ax3, abs_weights=False)
         self.plot_exposures(ax4)
 
-        #Row 3 — 
+        # Row 3
         ax_1 = fig.add_subplot(gs[2, 0])
         ax_2 = fig.add_subplot(gs[2, 1])
         self.plot_exposures_by_country(ax_1)
@@ -441,7 +424,6 @@ class PortfolioDashboardVisualizer:
 
         # Row 4
         ax5 = fig.add_subplot(gs[3, 1])
-
         self.print_metrics_table(ax5)
 
         # Row 5
@@ -451,8 +433,6 @@ class PortfolioDashboardVisualizer:
         # Row 6 — Drawdown
         ax_dd = fig.add_subplot(gs[5, :])
         self.plot_drawdown(ax_dd)
-
-
 
         # Row 7-8 — Big cumulative PnL PF only
         ax7 = fig.add_subplot(gs[6:, :])
