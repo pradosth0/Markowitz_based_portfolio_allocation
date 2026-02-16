@@ -1,10 +1,6 @@
 """
 Signal utilities for fixed-income alpha construction.
 
-This module is notebook-friendly:
-- works with long-format data: one row per (date, product)
-- keeps explicit column names
-- avoids side effects
 """
 
 from __future__ import annotations
@@ -18,8 +14,6 @@ import pandas as pd
 
 @dataclass
 class SignalConfig:
-    """Configuration for alpha estimation."""
-
     date_col: str = "time_stamp"
     asset_col: str = "product"
     ret_col: str = "ret_total_per_dv01"
