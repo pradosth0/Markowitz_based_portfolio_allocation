@@ -154,36 +154,44 @@ def compute_macaulay_duration(
     if price > 4:
         price = price / 100
 
-    # Calculate accrued time since last coupon payment
-    accrued_coupon = years_to_maturity % (1 / payment_frequency)
-    years_to_maturity -= accrued_coupon
-    # Handle Series to avoid FutureWarning
-    if isinstance(years_to_maturity, pd.Series):
-        number_of_payments = int((years_to_maturity * payment_frequency).iloc[0])
-    else:
-        number_of_payments = int(years_to_maturity * payment_frequency)
+    # Time to next coupon in YEARS (misnamed "accrued" in your code)
+    period = 1 / payment_frequency
+    time_to_next_coupon_y = years_to_maturity % period
 
-    # Calculate the regular coupon payment
+    # Convert that time to NUMBER OF PERIODS (important!)
+    time_to_next_coupon_p = time_to_next_coupon_y * payment_frequency
+
+    years_to_maturity_floor = years_to_maturity - time_to_next_coupon_y
+
+    # number of full periods remaining after removing the remainder
+    if isinstance(years_to_maturity_floor, pd.Series):
+        n_full = int((years_to_maturity_floor * payment_frequency).iloc[0])
+    else:
+        n_full = int(years_to_maturity_floor * payment_frequency)
+
+    # If exactly on a coupon date, next coupon is 1 period away (not 0),
+    # and the number of remaining coupon payments is n_full (not n_full+1)
+    if abs(time_to_next_coupon_y) < 1e-12:
+        time_to_next_coupon_p = 1.0
+        n_payments = n_full
+    else:
+        n_payments = n_full + 1
+
     coupon_payment = coupon_rate / payment_frequency
     q = 1 + (yield_to_maturity / payment_frequency)
 
-    # Calculate the present value weighted time for coupon payments
+    # Coupon times (in periods): time_to_next_coupon_p, 1+..., ..., (n_payments-1)+...
     macaulay_duration_value = sum(
-        (k + accrued_coupon) * coupon_payment / q ** (k + accrued_coupon)
-        for k in range(number_of_payments + 1)
+        (k + time_to_next_coupon_p) * coupon_payment / (q ** (k + time_to_next_coupon_p))
+        for k in range(n_payments)
     )
 
-    # Add the present value weighted time of the final principal payment
-    macaulay_duration_value += (
-        (number_of_payments + accrued_coupon)
-        * 1
-        / q ** (number_of_payments + accrued_coupon)
-    )
+    # Principal at maturity (same last time as the last coupon)
+    t_last = (n_payments - 1) + time_to_next_coupon_p
+    macaulay_duration_value += t_last * 1.0 / (q ** t_last)
 
-    # Divide by the bond price to get duration in terms of years
+    # Divide by bond price => duration in periods, then convert to years
     macaulay_duration_value = macaulay_duration_value / price
-
-    # Adjust for payment frequency
     return macaulay_duration_value / payment_frequency
 
 
@@ -621,6 +629,12 @@ def compute_forward_price_bond(
       - repo_rate: annuel décimal (simple)
       - horizon_months: int
     """
+    # Normalise country code to avoid KeyError / AttributeError
+    if isinstance(country_iso, str) and country_iso.strip():
+        country_iso = country_iso.strip().upper()
+    else:
+        country_iso = "IT"
+
     calendar = get_calendar(country_iso)
 
     # Day count robuste
@@ -642,7 +656,7 @@ def compute_forward_price_bond(
     face = 100.0
 
     if freq is None or (isinstance(freq, float) and math.isnan(freq)):
-        freq = COUNTRY_DEFAULT_FREQ_MAP[country_iso]
+        freq = COUNTRY_DEFAULT_FREQ_MAP.get(country_iso, 2)
 
     # Fréquence
     frequency = {1: ql.Annual, 2: ql.Semiannual, 4: ql.Quarterly}.get(
@@ -674,24 +688,20 @@ def compute_forward_price_bond(
     h_frac = repo_daycount.yearFraction(settle_ql, horizon_ql)
     coupons_in_window = []
     for cf in bond.cashflows():
-        if cf.hasOccurred(settle_ql):
+        cf_date = cf.date()
+        if cf_date <= settle_ql:
             continue
-        # if cf.date() < horizon_ql:
-        if cf.date() <= horizon_ql:
-            cf_frac = repo_daycount.yearFraction(settle_ql, cf.date())
-            reinvest = 1.0 + repo_rate * max(h_frac - cf_frac, 0.0)
-            coupons_in_window.append(100.0 * cf.amount() / face * reinvest)
+        if cf_date > horizon_ql:
+            continue
+        cf_frac = repo_daycount.yearFraction(settle_ql, cf_date)
+        reinvest = 1.0 + repo_rate * max(h_frac - cf_frac, 0.0)
+        coupons_in_window.append(100.0 * cf.amount() / face * reinvest)
 
     # if all(cf.date() > horizon_ql for cf in bond.cashflows() if not cf.hasOccurred(settle_ql)):
     #     accrued_increase_px = 0.0
 
     # Forward dirty & clean
-    fwd_dirty = (
-        dirty_today * (1.0 + repo_rate * h_frac)
-        - accrued_increase_px
-        - sum(coupons_in_window)
-    )
-
+    # Dirty forward = financed dirty today minus reinvested coupons in window
     fwd_dirty = dirty_today * (1.0 + repo_rate * h_frac) - sum(coupons_in_window)
 
     # repo_factor = (1 + repo_rate * h_frac)
@@ -741,4 +751,5 @@ def compute_forward_price_bond(
         "coupons_in_window": coupons_in_window,
         "accrued_today_px": accrued_today_px,
         "accrued_horizon_px": accrued_horizon_px,
+        "accrued_increase_px": accrued_increase_px,
     }
