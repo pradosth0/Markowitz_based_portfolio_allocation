@@ -104,7 +104,16 @@ def compute_roll_bp_1m(
         out[out_col] = roll
         return out
 
-    df = df.groupby([date_col, country_col], group_keys=False).apply(_roll_one_group)
+    # Robust across pandas versions: group keys might be removed from g,
+    # so we re-add them from g.name (tuple: (date, country))
+    df = df.groupby([date_col, country_col], sort=False, group_keys=False).apply(
+        lambda g: _roll_one_group(g).assign(**{date_col: g.name[0], country_col: g.name[1]})
+    )
+
+    # Safety: if apply produced a MultiIndex, drop it
+    if isinstance(df.index, pd.MultiIndex):
+        df = df.reset_index(drop=True)
+
     df.drop(columns=["_y_bp_"], inplace=True)
     return df
 
@@ -146,7 +155,16 @@ def orthogonalize_roll_vs_carry(
         out[out_col] = (r - beta * c0).fillna(0.0)
         return out
 
-    return df.groupby(date_col, group_keys=False).apply(_ortho)
+    # Robust across pandas versions: re-attach date from g.name
+    out = df.groupby(date_col, sort=False, group_keys=False).apply(
+        lambda g: _ortho(g).assign(**{date_col: g.name})
+    )
+
+    # If apply produced a MultiIndex, drop it
+    if isinstance(out.index, pd.MultiIndex):
+        out = out.reset_index(drop=True)
+
+    return out
 
 
 def apply_roll_to_signal(
