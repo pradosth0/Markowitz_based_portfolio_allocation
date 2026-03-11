@@ -93,8 +93,8 @@ class PortfolioDashboardVisualizer:
         if pf_value is None or bm_value is None:
             return None, None, None
 
-        pf_m = pf_value.resample(freq).last().fillna(method='ffill') - capital
-        bm_m = bm_value.resample(freq).last().fillna(method='ffill') - capital
+        pf_m = pf_value.resample(freq).last().ffill() - capital
+        bm_m = bm_value.resample(freq).last().ffill() - capital
 
         pf_diff = pf_m.diff().fillna(0)
 
@@ -151,7 +151,7 @@ class PortfolioDashboardVisualizer:
             return
 
         # Resample weekly for smoother display
-        pf_monthly = pf_value.resample('M').last().fillna(method='ffill')
+        pf_monthly = pf_value.resample('ME').last().ffill()
         pf_pnl = pf_monthly - capital
         pf_diff = pf_pnl.diff().fillna(0)
 
@@ -189,10 +189,10 @@ class PortfolioDashboardVisualizer:
         ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:,.0f}'))
         ax.legend()
     
-    def plot_pnl_attribution(self, ax=None, freq='M'):
+    def plot_pnl_attribution(self, ax=None, freq='ME'):
         """
         Attribution du PnL par actif/pays.
-        freq : 'M' monthly, 'W' weekly
+        freq : 'ME' monthly, 'W' weekly
         """
         pf_pnl = self.ts.metrics.get("portfolio_pnl")
         exposures = self.ts.exposures_history
@@ -229,8 +229,8 @@ class PortfolioDashboardVisualizer:
             return
 
         # Resample end-of-month
-        pf_m = pf_value.resample('M').last()
-        bm_m = bm_value.resample('M').last() if bm_value is not None else None
+        pf_m = pf_value.resample('ME').last()
+        bm_m = bm_value.resample('ME').last() if bm_value is not None else None
 
         pf_diff = pf_m.diff().fillna(0)
 
