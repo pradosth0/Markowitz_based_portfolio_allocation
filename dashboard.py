@@ -1,253 +1,331 @@
 """
 PortfolioDashboardVisualizer — Bloomberg Dark Terminal Style
 ============================================================
-Remplace / complète ta classe existante.
-Compatible avec ton interface TimeSeriesPortfolio :
-  self.ts.metrics, self.ts.weights_history, self.ts.capital_init, self.ts.rebalance_dates
+Version corrigée et améliorée.
+
+Corrections appliquées :
+  - KPI : clés alignées sur TimeSeriesPortfolio.metrics (sharpe, mean_return, drawdown…)
+  - plot_monthly_heatmap : utilise portfolio_returns (returns journaliers) pas pnl/capital
+  - plot_drawdown : lit metrics["drawdown"] directement, ne recalcule pas
+  - plot_pnl_attribution : remplacée par TC Breakdown (Markowitz vs Roll-down) — plus fictif
+  - _build_metrics_dict : calcule les dérivés manquants (annual_return, calmar, var_95…)
+  - Lisibilité : KPI plus grands, heatmap plus haute, moins d'annotations encombrantes
 """
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import matplotlib.ticker as mticker
 from matplotlib.gridspec import GridSpec
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import FancyBboxPatch
-import matplotlib.patheffects as pe
 from datetime import datetime
 import warnings
 warnings.filterwarnings("ignore")
 
 
-# ─── PALETTE BLOOMBERG DARK ───────────────────────────────────────────────────
+# ─── PALETTE ──────────────────────────────────────────────────────────────────
 
 DARK = {
-    "bg":        "#080C14",
-    "surface":   "#0D1421",
-    "border":    "#1A2540",
-    "accent":    "#0066FF",
-    "green":     "#00C896",
-    "red":       "#FF4560",
-    "gold":      "#F5A623",
-    "text":      "#E8EDF5",
-    "muted":     "#5A6A8A",
-    "dim":       "#2A3A5A",
-    "grid":      "#141E30",
+    "bg":      "#07090F",
+    "surface": "#0C1120",
+    "border":  "#1C2840",
+    "accent":  "#1A7FFF",
+    "green":   "#00D49A",
+    "red":     "#FF3D5A",
+    "gold":    "#F0A500",
+    "text":    "#D8E4F0",
+    "muted":   "#4E6080",
+    "dim":     "#233050",
+    "grid":    "#111A2C",
 }
 
 ASSET_COLORS = [
-    "#0066FF", "#00C896", "#F5A623", "#FF4560",
-    "#8B5CF6", "#06B6D4", "#F59E0B", "#10B981",
-    "#EC4899", "#64748B", "#84CC16", "#F97316",
+    "#1A7FFF", "#00D49A", "#F0A500", "#FF3D5A",
+    "#7C5CFC", "#00C4D4", "#F87C00", "#22C97A",
+    "#E040FB", "#546E8A", "#A3D900", "#FF7043",
 ]
 
-# Colormap rouge → vert pour heatmap
 RYGCMAP = LinearSegmentedColormap.from_list(
-    "ryg", ["#FF4560", "#1A2540", "#00C896"], N=256
+    "ryg", ["#FF3D5A", "#111A2C", "#00D49A"], N=256
 )
 
 
-# ─── HELPERS ──────────────────────────────────────────────────────────────────
+# ─── STYLE GLOBAL ─────────────────────────────────────────────────────────────
 
 def _apply_dark_style():
     plt.rcParams.update({
-        "figure.facecolor":   DARK["bg"],
-        "axes.facecolor":     DARK["surface"],
-        "axes.edgecolor":     DARK["border"],
-        "axes.linewidth":     0.8,
-        "axes.labelcolor":    DARK["muted"],
-        "axes.labelsize":     8,
-        "axes.titlesize":     10,
-        "axes.titlecolor":    DARK["text"],
-        "xtick.color":        DARK["muted"],
-        "ytick.color":        DARK["muted"],
-        "xtick.labelsize":    8,
-        "ytick.labelsize":    8,
-        "xtick.major.size":   0,
-        "ytick.major.size":   0,
-        "grid.color":         DARK["grid"],
-        "grid.linewidth":     0.5,
-        "grid.linestyle":     "--",
-        "grid.alpha":         1.0,
-        "legend.facecolor":   DARK["surface"],
-        "legend.edgecolor":   DARK["border"],
-        "legend.labelcolor":  DARK["muted"],
-        "legend.fontsize":    8,
-        "font.family":        "monospace",
-        "text.color":         DARK["text"],
-        "lines.antialiased":  True,
-        "patch.antialiased":  True,
+        "figure.facecolor":  DARK["bg"],
+        "axes.facecolor":    DARK["surface"],
+        "axes.edgecolor":    DARK["border"],
+        "axes.linewidth":    0.7,
+        "axes.labelcolor":   DARK["muted"],
+        "axes.labelsize":    8,
+        "axes.titlesize":    9,
+        "axes.titlecolor":   DARK["text"],
+        "xtick.color":       DARK["muted"],
+        "ytick.color":       DARK["muted"],
+        "xtick.labelsize":   8,
+        "ytick.labelsize":   8,
+        "xtick.major.size":  0,
+        "ytick.major.size":  0,
+        "grid.color":        DARK["grid"],
+        "grid.linewidth":    0.5,
+        "grid.linestyle":    "--",
+        "grid.alpha":        1.0,
+        "legend.facecolor":  DARK["surface"],
+        "legend.edgecolor":  DARK["border"],
+        "legend.labelcolor": DARK["muted"],
+        "legend.fontsize":   8,
+        "font.family":       "monospace",
+        "text.color":        DARK["text"],
     })
 
 
+# ─── FORMATTERS ───────────────────────────────────────────────────────────────
+
 def _fmt_pct(v, decimals=1):
-    return f"{v*100:+.{decimals}f}%"
+    return f"{v*100:+.{decimals}f}%" if not (v is None or np.isnan(v)) else "—"
 
-def _fmt_pct_ax(v, _=None, decimals=1):
-    return f"{v*100:.{decimals}f}%"
+def _fmt_pct_plain(v, decimals=1):
+    return f"{v*100:.{decimals}f}%" if not (v is None or np.isnan(v)) else "—"
 
-def _fmt_cur(v, _=None):
+def _fmt_cur(v):
     if abs(v) >= 1e6: return f"{v/1e6:.2f}M€"
     if abs(v) >= 1e3: return f"{v/1e3:.0f}K€"
     return f"{v:.0f}€"
 
-def _fmt_cur_short(v):
-    if abs(v) >= 1e6: return f"{v/1e6:.1f}M€"
-    if abs(v) >= 1e3: return f"{v/1e3:.0f}K€"
-    return f"{v:.0f}€"
+def _pct_formatter(v, _=None):   return f"{v*100:.1f}%"
+def _cur_formatter(v, _=None):   return _fmt_cur(v)
 
-def _section_title(ax, title, badge=None):
-    """Barre colorée + titre style terminal"""
-    ax.set_title("", pad=0)  # reset
-    t = f"  {title.upper()}"
-    if badge:
-        t += f"   [{badge}]"
-    ax.text(0.0, 1.035, "│", transform=ax.transAxes, fontsize=13,
-            color=DARK["accent"], va="bottom", ha="left", clip_on=False,
-            fontweight="bold")
-    ax.text(0.018, 1.035, t, transform=ax.transAxes, fontsize=9,
-            color=DARK["text"], va="bottom", ha="left", clip_on=False,
-            fontweight="bold", fontfamily="monospace")
+
+# ─── HELPERS ──────────────────────────────────────────────────────────────────
 
 def _style_ax(ax):
     ax.set_facecolor(DARK["surface"])
     ax.tick_params(colors=DARK["muted"], which="both")
-    ax.spines[:].set_color(DARK["border"])
-    ax.grid(True, axis="both", color=DARK["grid"], linewidth=0.5, linestyle="--", alpha=0.9)
+    for sp in ax.spines.values():
+        sp.set_color(DARK["border"])
+    ax.grid(True, color=DARK["grid"], linewidth=0.5, linestyle="--", alpha=0.9)
 
-def _shade_fill(ax, x, y1, y2, color, alpha=0.2):
-    ax.fill_between(x, y1, y2, where=(np.array(y1) >= np.array(y2)),
-                    color=DARK["green"], alpha=alpha, interpolate=True)
-    ax.fill_between(x, y1, y2, where=(np.array(y1) < np.array(y2)),
-                    color=DARK["red"], alpha=alpha, interpolate=True)
+
+def _section_title(ax, title, badge=None):
+    """Barre verticale colorée + titre en haut de l'axe."""
+    full = title.upper() + (f"   ·  {badge}" if badge else "")
+    ax.text(-0.01, 1.04, "▌", transform=ax.transAxes, fontsize=14,
+            color=DARK["accent"], va="bottom", ha="right", clip_on=False, fontweight="bold")
+    ax.text(0.005, 1.04, full, transform=ax.transAxes, fontsize=9,
+            color=DARK["text"], va="bottom", ha="left", clip_on=False,
+            fontweight="bold", fontfamily="monospace")
+
+
+def _color_signed(v):
+    return DARK["green"] if v >= 0 else DARK["red"]
 
 
 # ─── KPI PANEL ────────────────────────────────────────────────────────────────
 
 def _draw_kpi_panel(ax, metrics: dict):
-    """Bande KPI en haut du dashboard"""
-    ax.set_facecolor(DARK["surface"])
+    """
+    Bande KPI — clés issues directement de TimeSeriesPortfolio.metrics
+    + dérivés calculés dans _build_metrics_dict.
+    """
+    ax.set_facecolor(DARK["dim"])
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.axis("off")
-    for sp in ax.spines.values():
-        sp.set_visible(False)
 
     kpis = [
-        ("ANN. RETURN",  _fmt_pct(metrics.get("annual_return", 0)),  DARK["green"]),
-        ("VOLATILITY",   _fmt_pct(metrics.get("volatility", 0)),     DARK["text"]),
-        ("SHARPE",       f"{metrics.get('sharpe_ratio', 0):.2f}",    DARK["green"] if metrics.get("sharpe_ratio", 0) > 1 else DARK["gold"]),
-        ("MAX DD",       _fmt_pct(metrics.get("max_drawdown", 0)),   DARK["red"]),
-        ("CALMAR",       f"{metrics.get('calmar_ratio', 0):.2f}",    DARK["green"] if metrics.get("calmar_ratio", 0) > 1 else DARK["gold"]),
-        ("WIN RATE",     _fmt_pct(metrics.get("win_rate", 0)),       DARK["text"]),
-        ("VAR 95%",      _fmt_pct(metrics.get("var_95", 0)),         DARK["red"]),
-        ("TOTAL P&L",    _fmt_cur_short(metrics.get("total_pnl", 0)), DARK["green"]),
+        ("ANN. RETURN",
+         _fmt_pct(metrics.get("annual_return")),
+         _color_signed(metrics.get("annual_return", 0))),
+
+        ("VOLATILITY",
+         _fmt_pct_plain(metrics.get("volatility")),
+         DARK["text"]),
+
+        ("SHARPE",
+         f"{metrics.get('sharpe', 0):.2f}",                     # ← clé corrigée
+         DARK["green"] if metrics.get("sharpe", 0) > 1 else DARK["gold"]),
+
+        ("MAX DD",
+         _fmt_pct(metrics.get("max_drawdown")),
+         DARK["red"]),
+
+        ("CALMAR",
+         f"{metrics.get('calmar_ratio', 0):.2f}",
+         DARK["green"] if metrics.get("calmar_ratio", 0) > 1 else DARK["gold"]),
+
+        ("WIN RATE",
+         _fmt_pct_plain(metrics.get("win_rate", 0)),
+         DARK["text"]),
+
+        ("VaR 95%",
+         _fmt_pct(metrics.get("var_95")),
+         DARK["red"]),
+
+        ("TOTAL P&L",
+         _fmt_cur(metrics.get("total_pnl", 0)),
+         _color_signed(metrics.get("total_pnl", 0))),
+
+        ("TC TOTAL",
+         _fmt_cur(metrics.get("tc_total", 0)),
+         DARK["gold"]),
     ]
 
     n = len(kpis)
     xs = np.linspace(0, 1, n + 1)
+
     for i, (label, value, color) in enumerate(kpis):
         cx = (xs[i] + xs[i + 1]) / 2
-        ax.text(cx, 0.72, label, ha="center", va="center", fontsize=7,
-                color=DARK["muted"], fontfamily="monospace",
-                transform=ax.transAxes)
-        ax.text(cx, 0.28, value, ha="center", va="center", fontsize=11,
+        # Label
+        ax.text(cx, 0.78, label, ha="center", va="center", fontsize=7.5,
+                color=DARK["muted"], fontfamily="monospace", transform=ax.transAxes)
+        # Valeur — plus grande
+        ax.text(cx, 0.30, value, ha="center", va="center", fontsize=13,
                 color=color, fontfamily="monospace", fontweight="bold",
                 transform=ax.transAxes)
+        # Séparateur vertical
         if i < n - 1:
-            ax.axvline(xs[i + 1], color=DARK["border"], linewidth=0.8, alpha=0.7)
-
-    # Bordure extérieure
-    rect = FancyBboxPatch((0, 0), 1, 1, boxstyle="round,pad=0.01",
-                          linewidth=1, edgecolor=DARK["border"],
-                          facecolor="none", transform=ax.transAxes, clip_on=False)
-    ax.add_patch(rect)
+            ax.axvline(xs[i + 1], color=DARK["border"], linewidth=0.8, alpha=0.6)
 
 
-# ─── CUMULATIVE RETURN ────────────────────────────────────────────────────────
+# ─── HEADER ───────────────────────────────────────────────────────────────────
 
-def plot_cumulative_return(ax, pf_cum, bm_cum=None):
+def _draw_header(fig, metrics, capital):
+    final_val  = metrics.get("final_value", capital)
+    total_ret  = metrics.get("total_return", 0) or 0
+    date_str   = datetime.now().strftime("%Y-%m-%d  %H:%M")
+
+    fig.text(0.012, 0.984, "▌", fontsize=22, color=DARK["accent"], va="top")
+    fig.text(0.024, 0.985, "PORTFOLIO ANALYTICS", fontsize=14,
+             color=DARK["text"], fontweight="bold", fontfamily="monospace", va="top")
+    fig.text(0.024, 0.974, "Fixed Income · Multi-Product · DV01-Normalized",
+             fontsize=8, color=DARK["muted"], fontfamily="monospace", va="top")
+
+    fig.text(0.60, 0.983, "NAV", fontsize=7.5, color=DARK["muted"],
+             fontfamily="monospace", va="top")
+    fig.text(0.60, 0.973, _fmt_cur(final_val), fontsize=13,
+             color=DARK["green"], fontweight="bold", fontfamily="monospace", va="top")
+
+    fig.text(0.72, 0.983, "TOTAL RETURN", fontsize=7.5, color=DARK["muted"],
+             fontfamily="monospace", va="top")
+    fig.text(0.72, 0.973, _fmt_pct(total_ret), fontsize=13,
+             color=_color_signed(total_ret), fontweight="bold",
+             fontfamily="monospace", va="top")
+
+    fig.text(0.98, 0.983, date_str, fontsize=7.5, color=DARK["muted"],
+             fontfamily="monospace", va="top", ha="right")
+
+    fig.add_artist(plt.Line2D(
+        [0.01, 0.99], [0.966, 0.966], transform=fig.transFigure,
+        color=DARK["border"], linewidth=0.8
+    ))
+
+
+# ─── 1. CUMULATIVE RETURN ─────────────────────────────────────────────────────
+
+def _plot_cumulative_return(ax, pf_cum, bm_cum=None):
     _style_ax(ax)
-    badge = _fmt_pct(pf_cum.iloc[-1]) if len(pf_cum) else ""
+    badge = _fmt_pct(float(pf_cum.iloc[-1])) if len(pf_cum) else ""
     _section_title(ax, "Cumulative Return", badge)
 
     x = pf_cum.index
     ax.plot(x, pf_cum.values, color=DARK["accent"], lw=2, label="Portfolio", zorder=4)
+    ax.fill_between(x, pf_cum.values, 0, color=DARK["accent"], alpha=0.08)
 
-    if bm_cum is not None:
-        ax.plot(x, bm_cum.values, color=DARK["gold"], lw=1.5,
-                linestyle="--", alpha=0.85, label="Benchmark", zorder=3)
-        _shade_fill(ax, x, pf_cum.values, bm_cum.values, DARK["green"])
-
-    # Fill sous courbe
-    ax.fill_between(x, pf_cum.values, 0,
-                    color=DARK["accent"], alpha=0.07)
-    ax.axhline(0, color=DARK["border"], lw=0.8)
-
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(_fmt_pct_ax))
-    ax.tick_params(axis="x", rotation=30)
-    ax.legend(loc="upper left", framealpha=0.9)
-
-    # Annotation finale
-    ax.annotate(_fmt_pct(pf_cum.iloc[-1]),
-                xy=(pf_cum.index[-1], pf_cum.iloc[-1]),
-                xytext=(-50, 8), textcoords="offset points",
-                fontsize=8, color=DARK["accent"], fontweight="bold",
-                arrowprops=dict(arrowstyle="-", color=DARK["dim"], lw=0.8))
-    if bm_cum is not None:
-        ax.annotate(_fmt_pct(bm_cum.iloc[-1]),
+    if bm_cum is not None and len(bm_cum):
+        ax.plot(x, bm_cum.values, color=DARK["gold"], lw=1.4,
+                linestyle="--", alpha=0.8, label="Benchmark", zorder=3)
+        ax.fill_between(x, pf_cum.values, bm_cum.values,
+                        where=pf_cum.values >= bm_cum.values,
+                        color=DARK["green"], alpha=0.12, interpolate=True)
+        ax.fill_between(x, pf_cum.values, bm_cum.values,
+                        where=pf_cum.values < bm_cum.values,
+                        color=DARK["red"], alpha=0.12, interpolate=True)
+        # Annotation benchmark finale
+        ax.annotate(_fmt_pct(float(bm_cum.iloc[-1])),
                     xy=(bm_cum.index[-1], bm_cum.iloc[-1]),
-                    xytext=(-50, -16), textcoords="offset points",
+                    xytext=(-55, -14), textcoords="offset points",
                     fontsize=8, color=DARK["gold"],
-                    arrowprops=dict(arrowstyle="-", color=DARK["dim"], lw=0.8))
+                    arrowprops=dict(arrowstyle="-", color=DARK["muted"], lw=0.6))
 
-
-# ─── DRAWDOWN ─────────────────────────────────────────────────────────────────
-
-def plot_drawdown(ax, pf_cum):
-    _style_ax(ax)
-    roll_max = pf_cum.cummax()
-    dd = (pf_cum - roll_max) / (1 + roll_max.abs())
-    max_dd = dd.min()
-    _section_title(ax, "Drawdown", f"Max {_fmt_pct(max_dd)}")
-
-    x = dd.index
-    ax.fill_between(x, dd.values, 0, color=DARK["red"], alpha=0.35, zorder=2)
-    ax.plot(x, dd.values, color=DARK["red"], lw=1.2, zorder=3)
     ax.axhline(0, color=DARK["border"], lw=0.8)
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(_pct_formatter))
+    ax.tick_params(axis="x", rotation=25)
+    ax.legend(loc="upper left", framealpha=0.85)
+
+    # Annotation portfolio finale
+    ax.annotate(_fmt_pct(float(pf_cum.iloc[-1])),
+                xy=(pf_cum.index[-1], pf_cum.iloc[-1]),
+                xytext=(-55, 10), textcoords="offset points",
+                fontsize=8.5, color=DARK["accent"], fontweight="bold",
+                arrowprops=dict(arrowstyle="-", color=DARK["muted"], lw=0.6))
+
+
+# ─── 2. DRAWDOWN ──────────────────────────────────────────────────────────────
+
+def _plot_drawdown(ax, dd_series, max_dd=None):
+    """
+    ✅ Corrigé : reçoit directement metrics["drawdown"] — ne recalcule plus.
+    """
+    _style_ax(ax)
+    badge = f"Max {_fmt_pct(max_dd)}" if max_dd is not None else ""
+    _section_title(ax, "Drawdown", badge)
+
+    x = dd_series.index
+    ax.fill_between(x, dd_series.values, 0, color=DARK["red"], alpha=0.35, zorder=2)
+    ax.plot(x, dd_series.values, color=DARK["red"], lw=1.2, zorder=3)
+    ax.axhline(0, color=DARK["border"], lw=0.8)
+
+    # Annotation du max drawdown
+    if max_dd is not None and not np.isnan(max_dd):
+        idx_min = dd_series.idxmin()
+        ax.annotate(_fmt_pct(max_dd),
+                    xy=(idx_min, max_dd),
+                    xytext=(30, -18), textcoords="offset points",
+                    fontsize=8, color=DARK["red"], fontweight="bold",
+                    arrowprops=dict(arrowstyle="-", color=DARK["muted"], lw=0.6))
+
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v*100:.1f}%"))
-    ax.tick_params(axis="x", rotation=30)
+    ax.tick_params(axis="x", rotation=25)
 
 
-# ─── MONTHLY P&L WATERFALL ────────────────────────────────────────────────────
+# ─── 3. MONTHLY P&L WATERFALL ─────────────────────────────────────────────────
 
-def plot_monthly_pnl(ax, portfolio_value, capital):
+def _plot_monthly_pnl(ax, portfolio_value, capital):
     _style_ax(ax)
-    monthly = portfolio_value.resample("ME").last().ffill()
-    pnl = monthly - capital
-    monthly_delta = pnl.diff().fillna(pnl.iloc[0])
-    _section_title(ax, "Monthly P&L", _fmt_cur_short(pnl.iloc[-1]))
+    monthly   = portfolio_value.resample("ME").last().ffill()
+    cum_pnl   = monthly - capital
+    month_ret = cum_pnl.diff().fillna(cum_pnl.iloc[0])
+    bottoms   = cum_pnl.shift(1).fillna(0)
 
-    bottoms = pnl.shift(1).fillna(0)
-    colors = [DARK["green"] if v >= 0 else DARK["red"] for v in monthly_delta]
+    _section_title(ax, "Monthly P&L  (Cumulative)", _fmt_cur(float(cum_pnl.iloc[-1])))
 
-    ax.bar(monthly.index, monthly_delta.values, bottom=bottoms.values,
-           color=colors, alpha=0.85, width=20, edgecolor=DARK["surface"], linewidth=0.5)
-    ax.plot(pnl.index, pnl.values, color=DARK["text"], lw=1.5,
-            marker="o", markersize=2.5, zorder=4)
+    colors = [DARK["green"] if v >= 0 else DARK["red"] for v in month_ret]
+    ax.bar(monthly.index, month_ret.values, bottom=bottoms.values,
+           color=colors, alpha=0.80, width=20,
+           edgecolor=DARK["surface"], linewidth=0.4)
+    ax.plot(cum_pnl.index, cum_pnl.values, color=DARK["text"],
+            lw=1.5, marker="o", markersize=2.5, zorder=4)
     ax.axhline(0, color=DARK["border"], lw=0.8)
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(_fmt_cur))
-    ax.tick_params(axis="x", rotation=45)
+
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(_cur_formatter))
+    ax.tick_params(axis="x", rotation=35)
 
 
-# ─── MONTHLY HEATMAP ──────────────────────────────────────────────────────────
+# ─── 4. MONTHLY HEATMAP ───────────────────────────────────────────────────────
 
-def plot_monthly_heatmap(ax, pf_returns_daily, capital):
+def _plot_monthly_heatmap(ax, portfolio_returns):
+    """
+    ✅ Corrigé : utilise portfolio_returns (Series de returns journaliers)
+    au lieu de pnl/capital — évite les doublons et les erreurs d'échelle.
+    """
     _style_ax(ax)
     _section_title(ax, "Monthly Returns Heatmap")
 
-    monthly = (pf_returns_daily / capital).resample("ME").sum() * 100
+    # Returns mensuels composés
+    monthly = (1 + portfolio_returns.fillna(0)).resample("ME").prod() - 1
     monthly.index = pd.to_datetime(monthly.index)
 
     years  = sorted(monthly.index.year.unique())
@@ -255,311 +333,327 @@ def plot_monthly_heatmap(ax, pf_returns_daily, capital):
     month_labels = ["Jan","Feb","Mar","Apr","May","Jun",
                     "Jul","Aug","Sep","Oct","Nov","Dec"]
 
-    data_matrix = np.full((len(years), 12), np.nan)
+    mat = np.full((len(years), 12), np.nan)
     for i, y in enumerate(years):
         for j, m in enumerate(months):
             mask = (monthly.index.year == y) & (monthly.index.month == m)
             if mask.any():
-                data_matrix[i, j] = monthly[mask].values[0]
+                mat[i, j] = monthly[mask].values[0] * 100
 
-    im = ax.imshow(data_matrix, aspect="auto", cmap=RYGCMAP,
-                   vmin=-5, vmax=5, interpolation="nearest")
+    vmax = np.nanpercentile(np.abs(mat), 90) or 1.0
+    im = ax.imshow(mat, aspect="auto", cmap=RYGCMAP,
+                   vmin=-vmax, vmax=vmax, interpolation="nearest")
 
     ax.set_xticks(range(12))
-    ax.set_xticklabels(month_labels, fontsize=8, color=DARK["muted"])
+    ax.set_xticklabels(month_labels, fontsize=8.5, color=DARK["muted"])
     ax.set_yticks(range(len(years)))
-    ax.set_yticklabels([str(y) for y in years], fontsize=8, color=DARK["muted"])
+    ax.set_yticklabels([str(y) for y in years], fontsize=8.5, color=DARK["muted"])
     ax.tick_params(length=0)
     ax.grid(False)
 
-    # Annotations valeurs
+    # Annotations lisibles — taille fixe, couleur adaptée à l'intensité
     for i in range(len(years)):
         for j in range(12):
-            v = data_matrix[i, j]
+            v = mat[i, j]
             if not np.isnan(v):
+                txt_col = DARK["text"] if abs(v) < vmax * 0.6 else DARK["bg"]
                 ax.text(j, i, f"{v:+.1f}%", ha="center", va="center",
-                        fontsize=7, color=DARK["text"], fontfamily="monospace",
-                        fontweight="bold" if abs(v) > 2 else "normal")
+                        fontsize=8, color=txt_col, fontfamily="monospace",
+                        fontweight="bold" if abs(v) > vmax * 0.5 else "normal")
 
-    # Colorbar
     cbar = plt.colorbar(im, ax=ax, orientation="vertical", pad=0.01, shrink=0.9)
-    cbar.ax.tick_params(colors=DARK["muted"], labelsize=7)
+    cbar.ax.tick_params(colors=DARK["muted"], labelsize=7.5)
     cbar.outline.set_edgecolor(DARK["border"])
-    cbar.set_label("Return (%)", color=DARK["muted"], fontsize=7)
+    cbar.set_label("Return (%)", color=DARK["muted"], fontsize=7.5)
 
 
-# ─── WEIGHTS COMPOSITION ──────────────────────────────────────────────────────
+# ─── 5. WEIGHTS COMPOSITION ───────────────────────────────────────────────────
 
-def plot_weights_composition(ax, weights_history, top_n=8):
+def _plot_weights_composition(ax, weights_history, top_n=8):
     _style_ax(ax)
-    _section_title(ax, f"Portfolio Composition", f"Top {top_n}")
+    _section_title(ax, f"Portfolio Composition · Top {top_n}")
 
-    avg = weights_history.abs().mean()
+    avg      = weights_history.abs().mean()
     top_cols = avg.nlargest(top_n).index.tolist()
-    df = weights_history[top_cols].abs().copy()
-    others = weights_history.abs().drop(columns=top_cols, errors="ignore").sum(axis=1)
-    if others.sum() > 0:
+    df       = weights_history[top_cols].abs().copy()
+    others   = weights_history.abs().drop(columns=top_cols, errors="ignore").sum(axis=1)
+    if others.max() > 0.001:
         df["Others"] = others
 
     colors = (ASSET_COLORS * 4)[:len(df.columns)]
     ax.stackplot(df.index, df.T.values, labels=df.columns,
                  colors=colors, alpha=0.82)
     ax.set_ylim(0, 1.05)
-    ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
-    ax.tick_params(axis="x", rotation=30)
-    ax.legend(loc="upper left", ncol=2, fontsize=7,
+    ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0, decimals=0))
+    ax.tick_params(axis="x", rotation=25)
+    ax.legend(loc="upper left", ncol=2, fontsize=7.5,
               framealpha=0.9, labelcolor=DARK["text"])
 
 
-# ─── RISK CONTRIBUTION ────────────────────────────────────────────────────────
+# ─── 6. RISK CONTRIBUTION ─────────────────────────────────────────────────────
 
-def plot_risk_contribution(ax, weights_history):
+def _plot_risk_contribution(ax, weights_history):
     _style_ax(ax)
-    _section_title(ax, "Risk Contribution")
+    _section_title(ax, "Avg Weight by Product")
 
-    avg = weights_history.abs().mean().sort_values(ascending=True)
-    total = avg.sum()
-    contrib_pct = (avg / total * 100)
+    avg    = weights_history.abs().mean().sort_values(ascending=True)
+    total  = avg.sum()
+    pct    = (avg / total * 100) if total > 0 else avg * 0
 
-    colors = [ASSET_COLORS[i % len(ASSET_COLORS)] for i in range(len(contrib_pct))]
-    bars = ax.barh(range(len(contrib_pct)), contrib_pct.values,
-                   color=colors, alpha=0.85,
-                   edgecolor=DARK["surface"], linewidth=0.5, height=0.65)
+    # Limiter à top 15 pour la lisibilité
+    if len(pct) > 15:
+        pct = pct.nlargest(15).sort_values(ascending=True)
 
-    ax.set_yticks(range(len(contrib_pct)))
-    ax.set_yticklabels(contrib_pct.index, fontsize=7.5)
+    colors = [ASSET_COLORS[i % len(ASSET_COLORS)] for i in range(len(pct))]
+    bars   = ax.barh(range(len(pct)), pct.values,
+                     color=colors, alpha=0.85,
+                     edgecolor=DARK["surface"], linewidth=0.4, height=0.65)
+
+    ax.set_yticks(range(len(pct)))
+    ax.set_yticklabels(pct.index, fontsize=8)
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v:.0f}%"))
-    ax.grid(True, axis="x", color=DARK["grid"], linewidth=0.5, linestyle="--")
+    ax.grid(True, axis="x", color=DARK["grid"], linewidth=0.5)
     ax.grid(False, axis="y")
 
-    for i, (bar, v) in enumerate(zip(bars, contrib_pct.values)):
-        ax.text(v + 0.3, i, f"{v:.1f}%", va="center", fontsize=7,
+    for bar, v in zip(bars, pct.values):
+        ax.text(v + 0.2, bar.get_y() + bar.get_height() / 2,
+                f"{v:.1f}%", va="center", fontsize=7.5,
                 color=DARK["muted"], fontfamily="monospace")
 
 
-# ─── PNL ATTRIBUTION ──────────────────────────────────────────────────────────
+# ─── 7. TRANSACTION COSTS BREAKDOWN ──────────────────────────────────────────
 
-def plot_pnl_attribution(ax, weights_history, pf_pnl, capital, freq="ME"):
+def _plot_tc_breakdown(ax, metrics):
+    """
+    ✅ Remplace plot_pnl_attribution (qui utilisait np.random).
+    Affiche TC Markowitz vs TC Roll-down par période de rebalancement.
+    """
     _style_ax(ax)
-    _section_title(ax, f"P&L Attribution ({freq})")
 
-    # Approximation : décomposer par top 3 assets
-    top3 = weights_history.abs().mean().nlargest(3).index.tolist()
-    monthly_pnl = pf_pnl.resample(freq).sum()
+    tc_mkt  = metrics.get("transaction_costs_markowitz")
+    tc_roll = metrics.get("transaction_costs_rolldown")
+    tc_tot  = metrics.get("transaction_costs")
 
-    np.random.seed(42)
-    n = len(monthly_pnl)
-    alloc   = monthly_pnl.values * (np.random.rand(n) * 0.4 + 0.3)
-    select  = monthly_pnl.values * (np.random.rand(n) * 0.4 + 0.2)
-    interact = monthly_pnl.values - alloc - select
+    # Fallback si les séries détaillées ne sont pas disponibles
+    if tc_mkt is None or tc_roll is None:
+        if tc_tot is not None:
+            _section_title(ax, "Transaction Costs", _fmt_cur(float(tc_tot.sum())))
+            ax.bar(tc_tot.index, tc_tot.values,
+                   color=DARK["gold"], alpha=0.8, width=20,
+                   edgecolor=DARK["surface"], linewidth=0.4)
+            ax.plot(tc_tot.index, tc_tot.cumsum(),
+                    color=DARK["red"], lw=1.5, label="Cumulative TC", zorder=4)
+            ax.yaxis.set_major_formatter(mticker.FuncFormatter(_cur_formatter))
+            ax.tick_params(axis="x", rotation=30)
+            ax.legend(loc="upper left", framealpha=0.85)
+        else:
+            ax.text(0.5, 0.5, "No TC data available", ha="center", va="center",
+                    transform=ax.transAxes, color=DARK["muted"], fontsize=10)
+        return
 
-    x = np.arange(len(monthly_pnl))
-    w = 0.6
-    ax.bar(x, alloc,    width=w, label="Allocation",  color=DARK["accent"], alpha=0.85, edgecolor=DARK["surface"], lw=0.4)
-    ax.bar(x, select,   width=w, bottom=alloc,        label="Selection",   color=DARK["gold"],   alpha=0.85, edgecolor=DARK["surface"], lw=0.4)
-    ax.bar(x, interact, width=w, bottom=alloc+select, label="Interaction", color=DARK["green"],  alpha=0.85, edgecolor=DARK["surface"], lw=0.4)
-    ax.axhline(0, color=DARK["border"], lw=0.8)
+    total_tc = float(tc_tot.sum()) if tc_tot is not None else float(tc_mkt.sum() + tc_roll.sum())
+    _section_title(ax, "Transaction Costs — Markowitz vs Roll-Down",
+                   f"Total {_fmt_cur(total_tc)}")
 
-    ax.set_xticks(x[::max(1, n//12)])
-    ax.set_xticklabels(
-        [d.strftime("%b %y") for d in monthly_pnl.index[::max(1, n//12)]],
-        rotation=30, fontsize=7.5
-    )
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(_fmt_cur))
-    ax.legend(loc="upper left", ncol=3, framealpha=0.9, labelcolor=DARK["text"])
+    x     = tc_mkt.index
+    w     = (x[1] - x[0]).days * 0.4 if len(x) > 1 else 15
+    w     = max(w, 10)
 
+    ax.bar(x, tc_mkt.values,  width=w, label="Markowitz rebalance",
+           color=DARK["accent"], alpha=0.82, edgecolor=DARK["surface"], linewidth=0.4)
+    ax.bar(x, tc_roll.values, width=w, bottom=tc_mkt.values, label="Roll-down",
+           color=DARK["gold"], alpha=0.82, edgecolor=DARK["surface"], linewidth=0.4)
 
-# ─── HEADER ───────────────────────────────────────────────────────────────────
+    # Cumul en ligne secondaire
+    ax2 = ax.twinx()
+    cum = (tc_mkt + tc_roll).cumsum()
+    ax2.plot(x, cum.values, color=DARK["red"], lw=1.8,
+             linestyle="-", zorder=5, label="Cumul TC")
+    ax2.yaxis.set_major_formatter(mticker.FuncFormatter(_cur_formatter))
+    ax2.tick_params(colors=DARK["muted"])
+    ax2.set_facecolor("none")
+    for sp in ax2.spines.values():
+        sp.set_color(DARK["border"])
 
-def _draw_header(fig, metrics, capital):
-    final_val = metrics.get("final_value", capital)
-    total_ret = metrics.get("total_return", 0)
-    date_str  = datetime.now().strftime("%Y-%m-%d  %H:%M")
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(_cur_formatter))
+    ax.tick_params(axis="x", rotation=30)
 
-    fig.text(0.012, 0.983, "▌", fontsize=20, color=DARK["accent"], va="top")
-    fig.text(0.022, 0.985, "PORTFOLIO ANALYTICS", fontsize=13, color=DARK["text"],
-             fontweight="bold", fontfamily="monospace", va="top")
-    fig.text(0.022, 0.975, "Fixed Income · Multi-Asset · Backtested",
-             fontsize=8, color=DARK["muted"], fontfamily="monospace", va="top")
-
-    fig.text(0.62, 0.982, "NAV", fontsize=7, color=DARK["muted"],
-             fontfamily="monospace", va="top", ha="left")
-    fig.text(0.62, 0.974, _fmt_cur_short(final_val), fontsize=12,
-             color=DARK["green"], fontweight="bold", fontfamily="monospace", va="top")
-
-    fig.text(0.73, 0.982, "TOTAL RETURN", fontsize=7, color=DARK["muted"],
-             fontfamily="monospace", va="top", ha="left")
-    fig.text(0.73, 0.974, _fmt_pct(total_ret), fontsize=12,
-             color=DARK["green"] if total_ret >= 0 else DARK["red"],
-             fontweight="bold", fontfamily="monospace", va="top")
-
-    fig.text(0.98, 0.982, date_str, fontsize=7.5, color=DARK["dim"],
-             fontfamily="monospace", va="top", ha="right")
-
-    # Ligne de séparation
-    line = plt.Line2D([0.01, 0.99], [0.965, 0.965], transform=fig.transFigure,
-                      color=DARK["border"], linewidth=0.8)
-    fig.add_artist(line)
+    # Légende combinée
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, labels1 + labels2,
+              loc="upper left", framealpha=0.9, fontsize=8)
 
 
 # ─── CLASSE PRINCIPALE ────────────────────────────────────────────────────────
 
 class PortfolioDashboardVisualizer:
     """
-    Bloomberg Dark Terminal – Dashboard complet.
-    
-    Paramètres attendus dans ts.metrics :
-        pf_cumulative_return   : pd.Series (index datetime, valeurs float comme 0.12 pour 12%)
-        bm_cumulative_return   : pd.Series (optionnel)
-        portfolio_pnl          : pd.Series (P&L journalier en €)
-        portfolio_value        : pd.Series (valeur totale du portefeuille)  ← optionnel
-        initial_capital        : float  (sinon ts.capital_init)
-        annual_return          : float
-        volatility             : float
-        sharpe_ratio           : float
-        max_drawdown           : float
-        calmar_ratio           : float
-        win_rate               : float  (optionnel, calculé si absent)
-        var_95                 : float
-        total_pnl              : float
-        total_return           : float
-        final_value            : float
+    Bloomberg Dark Terminal — Dashboard complet.
+
+    Compatible avec TimeSeriesPortfolio.metrics :
+        pf_cumulative_return, bm_cumulative_return,
+        portfolio_pnl, portfolio_returns, portfolio_value,
+        sharpe, mean_return, volatility, drawdown, max_drawdown,
+        transaction_costs, transaction_costs_markowitz, transaction_costs_rolldown
     """
 
-    def __init__(self, ts_portfolio, style="dark"):
+    def __init__(self, ts_portfolio):
         self.ts = ts_portfolio
-        self.style = style
         _apply_dark_style()
 
-    # ── Helpers internes ──────────────────────────────────────────────────────
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _get_capital(self):
+        return self.ts.metrics.get(
+            "initial_capital",
+            getattr(self.ts, "capital_init", 1_000_000)
+        )
 
     def _get_portfolio_value(self):
         pv = self.ts.metrics.get("portfolio_value")
-        if pv is not None:
+        if pv is not None and len(pv) > 0:
             return pv
+        # Fallback : reconstituer depuis pnl
         pnl = self.ts.metrics.get("portfolio_pnl")
         if pnl is not None:
-            return pnl.cumsum() + self.ts.capital_init
+            return pnl.cumsum() + self._get_capital()
         return None
 
-    def _get_capital(self):
-        return self.ts.metrics.get("initial_capital", getattr(self.ts, "capital_init", 1_000_000))
-
     def _build_metrics_dict(self):
-        m = dict(self.ts.metrics)
-        # Win rate auto si absent
-        pnl = m.get("portfolio_pnl")
+        """
+        ✅ Corrigé : calcule les métriques dérivées manquantes depuis les
+        clés natives de TimeSeriesPortfolio (sharpe, mean_return, drawdown…).
+        """
+        m       = dict(self.ts.metrics)
+        capital = self._get_capital()
+
+        pf_ret = m.get("portfolio_returns", m.get("pf_cumulative_return"))
+        pf_cum = m.get("pf_cumulative_return")
+        pnl    = m.get("portfolio_pnl")
+        pv     = self._get_portfolio_value()
+
+        # Annual return (depuis mean_return journalier × 252)
+        if "annual_return" not in m:
+            mr = m.get("mean_return")
+            if mr is not None:
+                m["annual_return"] = float(mr) * 252
+
+        # Total return
+        if "total_return" not in m and pf_cum is not None and len(pf_cum):
+            m["total_return"] = float(pf_cum.iloc[-1])
+
+        # Final value
+        if "final_value" not in m and pv is not None and len(pv):
+            m["final_value"] = float(pv.iloc[-1])
+
+        # Total PnL
+        if "total_pnl" not in m and pnl is not None:
+            m["total_pnl"] = float(pnl.sum())
+
+        # Max drawdown (depuis la série drawdown)
+        if "max_drawdown" not in m:
+            dd = m.get("drawdown")
+            if dd is not None and len(dd):
+                m["max_drawdown"] = float(dd.min())
+
+        # Calmar ratio
+        if "calmar_ratio" not in m:
+            ar  = m.get("annual_return", 0) or 0
+            mdd = m.get("max_drawdown",  0) or 0
+            m["calmar_ratio"] = -ar / mdd if mdd < 0 else 0.0
+
+        # Win rate
         if "win_rate" not in m and pnl is not None:
             m["win_rate"] = float((pnl > 0).mean())
+
+        # VaR 95% journalier
+        if "var_95" not in m:
+            ret_series = m.get("portfolio_returns")
+            if ret_series is not None and len(ret_series) > 10:
+                m["var_95"] = float(np.percentile(ret_series.dropna(), 5))
+
+        # TC total
+        tc = m.get("transaction_costs")
+        if tc is not None:
+            m["tc_total"] = float(tc.sum())
+
         return m
-
-    # ── Graphiques publics (réutilisables) ────────────────────────────────────
-
-    def plot_cumulative_return(self, ax=None):
-        if ax is None: ax = plt.gca()
-        pf = self.ts.metrics.get("pf_cumulative_return")
-        bm = self.ts.metrics.get("bm_cumulative_return")
-        if pf is None: return
-        plot_cumulative_return(ax, pf, bm)
-
-    def plot_drawdown(self, ax=None):
-        if ax is None: ax = plt.gca()
-        pf = self.ts.metrics.get("pf_cumulative_return")
-        if pf is None: return
-        plot_drawdown(ax, pf)
-
-    def plot_cumulative_pnl(self, ax=None, freq="ME"):
-        if ax is None: ax = plt.gca()
-        pv = self._get_portfolio_value()
-        if pv is None: return
-        plot_monthly_pnl(ax, pv, self._get_capital())
-
-    def plot_weights_composition(self, ax=None, top_n=8):
-        if ax is None: ax = plt.gca()
-        if self.ts.weights_history.empty: return
-        plot_weights_composition(ax, self.ts.weights_history, top_n)
-
-    def plot_risk_contribution(self, ax=None):
-        if ax is None: ax = plt.gca()
-        if self.ts.weights_history.empty: return
-        plot_risk_contribution(ax, self.ts.weights_history)
-
-    def plot_monthly_returns_heatmap(self, ax=None):
-        if ax is None: ax = plt.gca()
-        pnl = self.ts.metrics.get("portfolio_pnl")
-        if pnl is None: return
-        plot_monthly_heatmap(ax, pnl, self._get_capital())
-
-    def plot_pnl_attribution(self, ax=None, freq="ME"):
-        if ax is None: ax = plt.gca()
-        pnl = self.ts.metrics.get("portfolio_pnl")
-        if pnl is None: return
-        plot_pnl_attribution(ax, self.ts.weights_history, pnl,
-                             self._get_capital(), freq)
 
     # ── Dashboard principal ───────────────────────────────────────────────────
 
-    def plot_dashboard(self, figsize=(22, 26), save_path=None, dpi=150):
+    def plot_dashboard(self, figsize=(22, 28), save_path=None, dpi=150):
         """
-        Layout Bloomberg dark 6 lignes :
-        ┌──────────────────────────────────────────────┐  ← Header
-        ├──────────────────────────────────────────────┤  ← KPIs
-        ├──────────────────────┬───────────────────────┤  ← Cum Return | Drawdown
-        ├──────────────────────┴───────────────────────┤  ← Monthly P&L
-        ├──────────────────────────────────────────────┤  ← Heatmap
-        ├──────────────────────┬───────────────────────┤  ← Weights | Risk Contrib
-        ├──────────────────────────────────────────────┤  ← Attribution
-        └──────────────────────────────────────────────┘
+        Layout 7 lignes :
+        ┌─────────────────────────────────┐  Header
+        ├─────────────────────────────────┤  KPIs (haute)
+        ├──────────────────┬──────────────┤  Cum Return  │ Drawdown
+        ├─────────────────────────────────┤  Monthly P&L
+        ├─────────────────────────────────┤  Heatmap (haute)
+        ├──────────────────┬──────────────┤  Composition │ Risk Contrib
+        ├─────────────────────────────────┤  TC Breakdown
+        └─────────────────────────────────┘
         """
         fig = plt.figure(figsize=figsize, facecolor=DARK["bg"])
         fig.patch.set_facecolor(DARK["bg"])
 
         gs = GridSpec(
             7, 2, figure=fig,
-            height_ratios=[0.08, 0.07, 0.18, 0.15, 0.14, 0.18, 0.15],
-            hspace=0.52, wspace=0.25,
-            left=0.06, right=0.97, top=0.96, bottom=0.03
+            height_ratios=[0.07, 0.09, 0.18, 0.14, 0.17, 0.19, 0.14],
+            hspace=0.58, wspace=0.28,
+            left=0.07, right=0.97, top=0.965, bottom=0.03
         )
 
-        metrics = self._build_metrics_dict()
+        m       = self._build_metrics_dict()
         capital = self._get_capital()
 
-        # ── Header ──
-        _draw_header(fig, metrics, capital)
+        # ── Header ──────────────────────────────────────────────────────────
+        _draw_header(fig, m, capital)
 
-        # ── Row 0 : KPI bar (full width) ──
+        # ── KPI ─────────────────────────────────────────────────────────────
         ax_kpi = fig.add_subplot(gs[1, :])
-        _draw_kpi_panel(ax_kpi, metrics)
+        _draw_kpi_panel(ax_kpi, m)
 
-        # ── Row 1 : Cumulative Return | Drawdown ──
-        ax_cum = fig.add_subplot(gs[2, 0])
-        self.plot_cumulative_return(ax_cum)
+        # ── Cum Return │ Drawdown ────────────────────────────────────────────
+        pf_cum = self.ts.metrics.get("pf_cumulative_return")
+        bm_cum = self.ts.metrics.get("bm_cumulative_return")
+        dd     = self.ts.metrics.get("drawdown")
 
-        ax_dd = fig.add_subplot(gs[2, 1])
-        self.plot_drawdown(ax_dd)
+        if pf_cum is not None and len(pf_cum):
+            ax_cum = fig.add_subplot(gs[2, 0])
+            _plot_cumulative_return(ax_cum, pf_cum, bm_cum)
 
-        # ── Row 2 : Monthly P&L (full width) ──
-        ax_pnl = fig.add_subplot(gs[3, :])
-        self.plot_cumulative_pnl(ax_pnl, freq="ME")
+        if dd is not None and len(dd):
+            ax_dd = fig.add_subplot(gs[2, 1])
+            _plot_drawdown(ax_dd, dd, m.get("max_drawdown"))
 
-        # ── Row 3 : Heatmap (full width) ──
-        ax_hm = fig.add_subplot(gs[4, :])
-        self.plot_monthly_returns_heatmap(ax_hm)
+        # ── Monthly P&L ──────────────────────────────────────────────────────
+        pv = self._get_portfolio_value()
+        if pv is not None and len(pv):
+            ax_pnl = fig.add_subplot(gs[3, :])
+            _plot_monthly_pnl(ax_pnl, pv, capital)
 
-        # ── Row 4 : Weights | Risk Contrib ──
-        ax_w = fig.add_subplot(gs[5, 0])
-        self.plot_weights_composition(ax_w, top_n=8)
+        # ── Heatmap ──────────────────────────────────────────────────────────
+        pf_returns = self.ts.metrics.get("portfolio_returns")
+        if pf_returns is not None and len(pf_returns):
+            ax_hm = fig.add_subplot(gs[4, :])
+            _plot_monthly_heatmap(ax_hm, pf_returns)
 
-        ax_rc = fig.add_subplot(gs[5, 1])
-        self.plot_risk_contribution(ax_rc)
+        # ── Composition │ Risk Contrib ───────────────────────────────────────
+        wh = getattr(self.ts, "weights_history", pd.DataFrame())
+        if not wh.empty:
+            ax_w  = fig.add_subplot(gs[5, 0])
+            _plot_weights_composition(ax_w, wh)
 
-        # ── Row 5 : Attribution (full width) ──
-        ax_attr = fig.add_subplot(gs[6, :])
-        self.plot_pnl_attribution(ax_attr, freq="ME")
+            ax_rc = fig.add_subplot(gs[5, 1])
+            _plot_risk_contribution(ax_rc, wh)
+
+        # ── TC Breakdown ─────────────────────────────────────────────────────
+        ax_tc = fig.add_subplot(gs[6, :])
+        _plot_tc_breakdown(ax_tc, m)
 
         if save_path:
             fig.savefig(save_path, dpi=dpi, bbox_inches="tight",
-            
                         facecolor=DARK["bg"])
             print(f"✓ Dashboard saved → {save_path}")
 
@@ -570,57 +664,68 @@ class PortfolioDashboardVisualizer:
         plt.close(fig)
 
 
-# ─── DEMO (données simulées) ──────────────────────────────────────────────────
+# ─── DEMO ─────────────────────────────────────────────────────────────────────
 
 class _MockPortfolio:
-    """Portfolio simulé pour démonstration."""
+    """Portfolio simulé pour démonstration standalone."""
 
     def __init__(self):
         self.capital_init = 1_000_000
-        dates = pd.bdate_range("2022-01-03", "2024-12-31")
+        dates = pd.bdate_range("2021-01-04", "2025-06-10")
         np.random.seed(42)
 
-        # Returns journaliers
-        pf_ret  = pd.Series(np.random.normal(0.0004, 0.009, len(dates)), index=dates)
-        bm_ret  = pd.Series(np.random.normal(0.0002, 0.007, len(dates)), index=dates)
+        pf_ret  = pd.Series(np.random.normal(0.00045, 0.008, len(dates)), index=dates)
+        bm_ret  = pd.Series(np.random.normal(0.00020, 0.006, len(dates)), index=dates)
         pf_pnl  = pf_ret * self.capital_init
-
         pf_cum  = (1 + pf_ret).cumprod() - 1
         bm_cum  = (1 + bm_ret).cumprod() - 1
         pf_val  = self.capital_init * (1 + pf_cum)
-        max_dd  = float(((pf_cum - pf_cum.cummax()) / (1 + pf_cum.cummax().abs())).min())
+        roll_mx = pf_val.cummax()
+        dd      = (pf_val - roll_mx) / roll_mx
         ann_ret = float((1 + pf_cum.iloc[-1]) ** (252 / len(dates)) - 1)
         vol     = float(pf_ret.std() * np.sqrt(252))
 
+        # TC simulées
+        rb_dates = pd.bdate_range("2021-01-04", "2025-06-10", freq="ME")
+        tc_mkt   = pd.Series(np.abs(np.random.normal(500, 200, len(rb_dates))), index=rb_dates)
+        tc_roll  = pd.Series(np.abs(np.random.normal(150, 80,  len(rb_dates))), index=rb_dates)
+
         self.metrics = {
-            "pf_cumulative_return": pf_cum,
-            "bm_cumulative_return": bm_cum,
-            "portfolio_pnl":        pf_pnl,
-            "portfolio_value":      pf_val,
-            "initial_capital":      self.capital_init,
-            "annual_return":        ann_ret,
-            "volatility":           vol,
-            "sharpe_ratio":         ann_ret / vol if vol else 0,
-            "max_drawdown":         max_dd,
-            "calmar_ratio":         -ann_ret / max_dd if max_dd else 0,
-            "win_rate":             float((pf_ret > 0).mean()),
-            "var_95":               float(np.percentile(pf_ret.dropna(), 5)),
-            "total_pnl":            float(pf_pnl.sum()),
-            "total_return":         float(pf_cum.iloc[-1]),
-            "final_value":          float(pf_val.iloc[-1]),
+            "pf_cumulative_return":        pf_cum,
+            "bm_cumulative_return":        bm_cum,
+            "portfolio_returns":           pf_ret,
+            "portfolio_pnl":               pf_pnl,
+            "portfolio_value":             pf_val,
+            "initial_capital":             self.capital_init,
+            "mean_return":                 float(pf_ret.mean()),
+            "volatility":                  vol,
+            "sharpe":                      ann_ret / vol if vol else 0,
+            "drawdown":                    dd,
+            "max_drawdown":                float(dd.min()),
+            "win_rate":                    float((pf_ret > 0).mean()),
+            "var_95":                      float(np.percentile(pf_ret, 5)),
+            "total_pnl":                   float(pf_pnl.sum()),
+            "total_return":                float(pf_cum.iloc[-1]),
+            "final_value":                 float(pf_val.iloc[-1]),
+            "transaction_costs":           tc_mkt + tc_roll,
+            "transaction_costs_markowitz": tc_mkt,
+            "transaction_costs_rolldown":  tc_roll,
         }
 
-        # Weights history
-        assets = ["FR Gov","DE Gov","IT Gov","SP Gov","UK Corp","US Corp","Cash","EM IG"]
-        rb_dates = pd.bdate_range("2022-01-03", "2024-12-31", freq="ME")
-        wh = pd.DataFrame(np.random.dirichlet(np.ones(len(assets)), len(rb_dates)),
-                          index=rb_dates, columns=assets)
+        assets   = ["FR_2","DE_5","IT_10","FR_DE_5","FR_2_10",
+                    "DE_fly_2_5_10","FR_DE_slope_2_10","SP_10","DE_2"]
+        rb_idx   = pd.bdate_range("2021-01-04", "2025-06-10", freq="ME")
+        wh       = pd.DataFrame(
+            np.random.dirichlet(np.ones(len(assets)), len(rb_idx)),
+            index=rb_idx, columns=assets
+        )
         self.weights_history = wh.reindex(dates).ffill().fillna(0)
-        self.rebalance_dates = rb_dates
+        self.rebalance_dates = rb_idx
+        
 
 
 if __name__ == "__main__":
-    print("Generating Bloomberg-style portfolio dashboard...")
+    print("Generating dashboard...")
     mock = _MockPortfolio()
     viz  = PortfolioDashboardVisualizer(mock)
     fig  = viz.plot_dashboard(save_path="portfolio_dashboard.png", dpi=150)
