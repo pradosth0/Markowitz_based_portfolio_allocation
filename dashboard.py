@@ -76,7 +76,7 @@ def _apply_dark_style():
         "legend.facecolor":  DARK["surface"],
         "legend.edgecolor":  DARK["border"],
         "legend.labelcolor": DARK["muted"],
-        "legend.fontsize":   8,
+        "legend.fontsize":   10,
         "font.family":       "monospace",
         "text.color":        DARK["text"],
     })
@@ -112,9 +112,9 @@ def _style_ax(ax):
 def _section_title(ax, title, badge=None):
     """Barre verticale colorée + titre en haut de l'axe."""
     full = title.upper() + (f"   ·  {badge}" if badge else "")
-    ax.text(-0.01, 1.04, "▌", transform=ax.transAxes, fontsize=14,
+    ax.text(-0.01, 1.04, "▌", transform=ax.transAxes, fontsize=18,
             color=DARK["accent"], va="bottom", ha="right", clip_on=False, fontweight="bold")
-    ax.text(0.005, 1.04, full, transform=ax.transAxes, fontsize=9,
+    ax.text(0.005, 1.04, full, transform=ax.transAxes, fontsize=12,
             color=DARK["text"], va="bottom", ha="left", clip_on=False,
             fontweight="bold", fontfamily="monospace")
 
@@ -179,10 +179,10 @@ def _draw_kpi_panel(ax, metrics: dict):
     for i, (label, value, color) in enumerate(kpis):
         cx = (xs[i] + xs[i + 1]) / 2
         # Label
-        ax.text(cx, 0.78, label, ha="center", va="center", fontsize=7.5,
+        ax.text(cx, 0.78, label, ha="center", va="center", fontsize=9.5,
                 color=DARK["muted"], fontfamily="monospace", transform=ax.transAxes)
         # Valeur — plus grande
-        ax.text(cx, 0.30, value, ha="center", va="center", fontsize=13,
+        ax.text(cx, 0.30, value, ha="center", va="center", fontsize=15,
                 color=color, fontfamily="monospace", fontweight="bold",
                 transform=ax.transAxes)
         # Séparateur vertical
@@ -197,24 +197,24 @@ def _draw_header(fig, metrics, capital):
     total_ret  = metrics.get("total_return", 0) or 0
     date_str   = datetime.now().strftime("%Y-%m-%d  %H:%M")
 
-    fig.text(0.012, 0.984, "▌", fontsize=22, color=DARK["accent"], va="top")
-    fig.text(0.024, 0.985, "PORTFOLIO ANALYTICS", fontsize=14,
+    fig.text(0.012, 0.984, "▌", fontsize=32, color=DARK["accent"], va="top")
+    fig.text(0.024, 0.985, "PORTFOLIO ANALYTICS", fontsize=18,
              color=DARK["text"], fontweight="bold", fontfamily="monospace", va="top")
     fig.text(0.024, 0.974, "Fixed Income · Multi-Product · DV01-Normalized",
-             fontsize=8, color=DARK["muted"], fontfamily="monospace", va="top")
+             fontsize=12, color=DARK["muted"], fontfamily="monospace", va="top")
 
-    fig.text(0.60, 0.983, "NAV", fontsize=7.5, color=DARK["muted"],
+    fig.text(0.60, 0.983, "NAV", fontsize=9.5, color=DARK["muted"],
              fontfamily="monospace", va="top")
-    fig.text(0.60, 0.973, _fmt_cur(final_val), fontsize=13,
+    fig.text(0.60, 0.973, _fmt_cur(final_val), fontsize=15,
              color=DARK["green"], fontweight="bold", fontfamily="monospace", va="top")
 
-    fig.text(0.72, 0.983, "TOTAL RETURN", fontsize=7.5, color=DARK["muted"],
+    fig.text(0.72, 0.983, "TOTAL RETURN", fontsize=9.5, color=DARK["muted"],
              fontfamily="monospace", va="top")
-    fig.text(0.72, 0.973, _fmt_pct(total_ret), fontsize=13,
+    fig.text(0.72, 0.973, _fmt_pct(total_ret), fontsize=15,
              color=_color_signed(total_ret), fontweight="bold",
              fontfamily="monospace", va="top")
 
-    fig.text(0.98, 0.983, date_str, fontsize=7.5, color=DARK["muted"],
+    fig.text(0.98, 0.983, date_str, fontsize=9.5, color=DARK["muted"],
              fontfamily="monospace", va="top", ha="right")
 
     fig.add_artist(plt.Line2D(
@@ -247,7 +247,7 @@ def _plot_cumulative_return(ax, pf_cum, bm_cum=None):
         ax.annotate(_fmt_pct(float(bm_cum.iloc[-1])),
                     xy=(bm_cum.index[-1], bm_cum.iloc[-1]),
                     xytext=(-55, -14), textcoords="offset points",
-                    fontsize=8, color=DARK["gold"],
+                    fontsize=10, color=DARK["gold"],
                     arrowprops=dict(arrowstyle="-", color=DARK["muted"], lw=0.6))
 
     ax.axhline(0, color=DARK["border"], lw=0.8)
@@ -259,7 +259,7 @@ def _plot_cumulative_return(ax, pf_cum, bm_cum=None):
     ax.annotate(_fmt_pct(float(pf_cum.iloc[-1])),
                 xy=(pf_cum.index[-1], pf_cum.iloc[-1]),
                 xytext=(-55, 10), textcoords="offset points",
-                fontsize=8.5, color=DARK["accent"], fontweight="bold",
+                fontsize=10.5, color=DARK["accent"], fontweight="bold",
                 arrowprops=dict(arrowstyle="-", color=DARK["muted"], lw=0.6))
 
 
@@ -284,7 +284,7 @@ def _plot_drawdown(ax, dd_series, max_dd=None):
         ax.annotate(_fmt_pct(max_dd),
                     xy=(idx_min, max_dd),
                     xytext=(30, -18), textcoords="offset points",
-                    fontsize=8, color=DARK["red"], fontweight="bold",
+                    fontsize=10, color=DARK["red"], fontweight="bold",
                     arrowprops=dict(arrowstyle="-", color=DARK["muted"], lw=0.6))
 
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v*100:.1f}%"))
@@ -345,9 +345,9 @@ def _plot_monthly_heatmap(ax, portfolio_returns):
                    vmin=-vmax, vmax=vmax, interpolation="nearest")
 
     ax.set_xticks(range(12))
-    ax.set_xticklabels(month_labels, fontsize=8.5, color=DARK["muted"])
+    ax.set_xticklabels(month_labels, fontsize=10.5, color=DARK["muted"])
     ax.set_yticks(range(len(years)))
-    ax.set_yticklabels([str(y) for y in years], fontsize=8.5, color=DARK["muted"])
+    ax.set_yticklabels([str(y) for y in years], fontsize=10.5, color=DARK["muted"])
     ax.tick_params(length=0)
     ax.grid(False)
 
@@ -358,13 +358,13 @@ def _plot_monthly_heatmap(ax, portfolio_returns):
             if not np.isnan(v):
                 txt_col = DARK["text"] if abs(v) < vmax * 0.6 else DARK["bg"]
                 ax.text(j, i, f"{v:+.1f}%", ha="center", va="center",
-                        fontsize=8, color=txt_col, fontfamily="monospace",
+                        fontsize=10, color=txt_col, fontfamily="monospace",
                         fontweight="bold" if abs(v) > vmax * 0.5 else "normal")
 
     cbar = plt.colorbar(im, ax=ax, orientation="vertical", pad=0.01, shrink=0.9)
     cbar.ax.tick_params(colors=DARK["muted"], labelsize=7.5)
     cbar.outline.set_edgecolor(DARK["border"])
-    cbar.set_label("Return (%)", color=DARK["muted"], fontsize=7.5)
+    cbar.set_label("Return (%)", color=DARK["muted"], fontsize=9.5)
 
 
 # ─── 5. WEIGHTS COMPOSITION ───────────────────────────────────────────────────
@@ -386,7 +386,7 @@ def _plot_weights_composition(ax, weights_history, top_n=8):
     ax.set_ylim(0, 1.05)
     ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0, decimals=0))
     ax.tick_params(axis="x", rotation=25)
-    ax.legend(loc="upper left", ncol=2, fontsize=7.5,
+    ax.legend(loc="upper left", ncol=2, fontsize=9.5,
               framealpha=0.9, labelcolor=DARK["text"])
 
 
@@ -410,14 +410,14 @@ def _plot_risk_contribution(ax, weights_history):
                      edgecolor=DARK["surface"], linewidth=0.4, height=0.65)
 
     ax.set_yticks(range(len(pct)))
-    ax.set_yticklabels(pct.index, fontsize=8)
+    ax.set_yticklabels(pct.index, fontsize=10)
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v:.0f}%"))
     ax.grid(True, axis="x", color=DARK["grid"], linewidth=0.5)
     ax.grid(False, axis="y")
 
     for bar, v in zip(bars, pct.values):
         ax.text(v + 0.2, bar.get_y() + bar.get_height() / 2,
-                f"{v:.1f}%", va="center", fontsize=7.5,
+                f"{v:.1f}%", va="center", fontsize=9.5,
                 color=DARK["muted"], fontfamily="monospace")
 
 
@@ -448,7 +448,7 @@ def _plot_tc_breakdown(ax, metrics):
             ax.legend(loc="upper left", framealpha=0.85)
         else:
             ax.text(0.5, 0.5, "No TC data available", ha="center", va="center",
-                    transform=ax.transAxes, color=DARK["muted"], fontsize=10)
+                    transform=ax.transAxes, color=DARK["muted"], fontsize=12)
         return
 
     total_tc = float(tc_tot.sum()) if tc_tot is not None else float(tc_mkt.sum() + tc_roll.sum())
@@ -482,7 +482,7 @@ def _plot_tc_breakdown(ax, metrics):
     lines1, labels1 = ax.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax.legend(lines1 + lines2, labels1 + labels2,
-              loc="upper left", framealpha=0.9, fontsize=8)
+              loc="upper left", framealpha=0.9, fontsize=10)
 
 
 # ─── CLASSE PRINCIPALE ────────────────────────────────────────────────────────
@@ -721,7 +721,7 @@ class _MockPortfolio:
         )
         self.weights_history = wh.reindex(dates).ffill().fillna(0)
         self.rebalance_dates = rb_idx
-        
+
 
 
 if __name__ == "__main__":
